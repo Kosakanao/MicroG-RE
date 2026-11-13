@@ -1,30 +1,18 @@
 name: "Gradle build"
 permissions: {}
+# Manual runs only. The owner triggers this from the Actions page and picks
+# the branch to build - no automatic runs on push or pull_request.
 on:
-  - pull_request
   - workflow_dispatch
 
 jobs:
   build:
-    name: "Gradle build ${{ matrix.target }}"
+    name: "Build arm64 debug APK"
     runs-on: ubuntu-latest
     env:
       GRADLE_MICROG_VERSION_WITHOUT_GIT: 1
 
-    strategy:
-      matrix:
-        target: [Debug, Release]
-
     steps:
-      - name: "Free disk space"
-        run: |
-          # Deleting unneeded software packages
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /opt/hostedtoolcache/go
-
-          # Log available space
-          df -h
-
       - name: "Checkout sources"
         uses: actions/checkout@v7
         with:
@@ -38,39 +26,20 @@ jobs:
 
       - name: "Setup Gradle"
         uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-encryption-key: ${{ secrets.GradleEncryptionKey }}
-          build-scan-publish: true
-          build-scan-terms-of-use-url: "https://gradle.com/help/legal-terms-of-use"
-          build-scan-terms-of-use-agree: "yes"
 
-      - name: "Setup matchers"
+      # One flavor (default), one build type (debug), one ABI (arm64-v8a).
+      # Without -Pabi the build bundles four ABIs and every flavor, which is
+      # why the previous artifact was ~343 MB instead of ~43 MB.
+      - name: "Build single-ABI arm64 debug APK"
+        run: "./gradlew --no-daemon :play-services-core:assembleDefaultDebug -Pabi=arm64-v8a"
+
+      - name: "List built APKs"
         run: |
-          # Setting up matchers...
+          find play-services-core/build/outputs/apk -name "*.apk" -printf "%p  %s bytes\n"
 
-          matchers_dir='${{ github.workspace }}/.github/matchers'
-          matcher_list()
-          {
-            echo 'gradle-build-matcher.json'
-            echo 'gradle-build-kotlin-error-matcher.json'
-          }
-
-          matcher_list | while IFS='' read -r NAME; do
-            if test -f "${matchers_dir:?}/${NAME:?}"; then
-              echo "::add-matcher::${matchers_dir:?}/${NAME:?}"
-              echo "Matcher configured: ${NAME:?}"
-            fi
-          done
-
-      - name: "Execute Gradle assemble"
-        run: "./gradlew assemble${{ matrix.target }}"
-
-      - name: "Execute Gradle lint"
-        run: "./gradlew lint${{ matrix.target }}"
-
-#      - name: "Upload APK artifacts"
-#        uses: actions/upload-artifact@v7
-#        with:
-#          name: microg-apks-${{ matrix.target }}
-#          path: "play-services-core/build/outputs/apk/*/*/*.apk"
-#          if-no-files-found: error
+      - name: "Upload APK artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: microg-default-debug-arm64-v8a
+          path: "play-services-core/build/outputs/apk/default/debug/*.apk"
+          if-no-files-found: error
